@@ -3,9 +3,13 @@ use mongodb::{Client, options::{ClientOptions}};
 use handlebars::Handlebars;
 use serde_json::json;
 use std::{fs};
+use std::str::FromStr;
 use futures::StreamExt;
 use warp::Filter;
 use mongodb::{bson::{Document, doc}};
+use mongodb::bson::{Array, DateTime};
+use mongodb::bson::oid::ObjectId;
+use serde::{Deserialize, Serialize};
 
 fn load_template() -> Result<Handlebars<'static>, handlebars::TemplateError> {
     let template_content = fs::read_to_string("./static/index.html")
@@ -16,6 +20,8 @@ fn load_template() -> Result<Handlebars<'static>, handlebars::TemplateError> {
 
     Ok(handlebars)
 }
+
+
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>>{
@@ -33,17 +39,39 @@ async fn main() -> Result<(), Box<dyn std::error::Error>>{
 
     // Get a handle to the "users" collection.
     let collection = db.collection::<Document>("users");
+    let target_id: ObjectId = ObjectId::from_str("64b6d1b17f20fe2884362ec6").expect("Invalid ObjectId");
 
-    let mut cursor = collection.find(doc! { "name": "anraow" }, None).await?;
+    let mut cursor = collection.find(doc! { "_id": target_id }, None).await?;
     while let Some(result) = cursor.next().await {
         match result {
             Ok(document) => {
-                println!("first_name: {}", document.get_str("first_name").unwrap_or("N/A"));
+                // Extract fields as needed
+                let caption = document.get_str("caption").unwrap_or("N/A").to_string();
+                let date = document.get_datetime("date").map(|d| d.to_owned()).unwrap_or_else(|_| DateTime::now());
+                let poster = document.get_str("poster").unwrap_or("N/A").to_string();
+                let keyboard = document.get_array("keyboard").map(|a| a.to_owned()).unwrap_or_else(|_| Array::new());
+
+                #[derive(Debug, Serialize, Deserialize)]
+                struct Event {
+                    caption: String,
+                    date: DateTime,
+                    poster: String,
+                    keyboard: Array,
+                }
+
+                let event = Event {
+                    caption,
+                    date,
+                    poster,
+                    keyboard
+                };
+
+                // Print the event using the Debug trait
+                println!("{:?}", event);
             }
             Err(e) => eprintln!("Error while iterating over cursor: {}", e),
         }
     }
-
 
     let handlebars = load_template().expect("Failed to load template");
 
