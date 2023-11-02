@@ -3,6 +3,7 @@ use mongodb::{Client, options::{ClientOptions}};
 use handlebars::Handlebars;
 use serde_json::json;
 use std::{fs};
+use futures::StreamExt;
 use warp::Filter;
 use mongodb::{bson::{Document, doc}};
 
@@ -33,13 +34,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>>{
     // Get a handle to the "users" collection.
     let collection = db.collection::<Document>("users");
 
-    let user = collection.find_one(
-        doc! {
-            "name": "anraow",
-        },
-        None
-    ).await;
-
+    let mut cursor = collection.find(doc! { "name": "anraow" }, None).await?;
+    while let Some(result) = cursor.next().await {
+        match result {
+            Ok(document) => {
+                println!("first_name: {}", document.get_str("first_name").unwrap_or("N/A"));
+            }
+            Err(e) => eprintln!("Error while iterating over cursor: {}", e),
+        }
+    }
 
 
     let handlebars = load_template().expect("Failed to load template");
