@@ -14,17 +14,13 @@
     <div class="container">
         <div class="event-block">
             <div class="poster">
-                <img class="poster-picture" src="media/poster-example.jpg" alt="Evento Poster">
+                <img class="poster-picture" src="{{ event_poster}}" alt="Evento Poster">
             </div>
             <div class="event-details">
-                <div class="event-links">
-                    <a href="#">{{ link_name }}</a>
-                    <a href="#">Instagram</a>
-                </div>
+                <div class="event-links" id="eventLinks"> </div>
                 <div class="info">
-                    <p class="date">12.08.23 16:00<span>(dd.mm.yy HH:MM)</span></p>
-                    <p class="description">Drake Announces His NOCTA x Nike Tech Fleece Collection
-                        Cozy zip-up-hoodies, crewnecks and sweatpants are done up with icy blue themes and white Swoosh branding.</p>
+                    <p class="date">{{ event_date }}<span>(dd.mm.yy HH:MM)</span></p>
+                    <p class="description">{{ event_caption }}</p>
                 </div>
                 <div class="event-notify">
                     <button class="notify-button">Noitfy</button>
@@ -36,5 +32,6 @@
     <div class="footer">
         @2023 Epicentr.
     </div>
+    {{ event_keyboard }}
 </body>
 </html>
