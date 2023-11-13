@@ -5,16 +5,24 @@ use serde_json::json;
 use std::{fs};
 use std::str::FromStr;
 use futures::StreamExt;
-use warp::Filter;
+use warp::{Filter};
 use mongodb::{bson::{Document, doc}};
 use mongodb::bson::oid::ObjectId;
 use serde::{Deserialize, Serialize};
 use std::string::String;
 use chrono::{NaiveDateTime, Utc};
 use chrono::format::strftime::StrftimeItems;
+use reqwest;
 
+#[derive(Debug, Serialize, Deserialize, Clone)]
+struct Event {
+    caption: String,
+    date: String,
+    poster: String,
+    keyboard: String,
+}
 
-fn load_template(event: Option<&Event>) -> Result<Handlebars<'static>, handlebars::TemplateError> {
+async fn load_template(event: Option<&Event>) -> Result<Handlebars<'static>, handlebars::TemplateError> {
     let template_content = fs::read_to_string("./static/index.html")
         .map_err(|err| handlebars::TemplateError::from((std::io::Error::new(std::io::ErrorKind::Other, err), "Failed to read template".to_string())))?;
 
@@ -26,7 +34,7 @@ fn load_template(event: Option<&Event>) -> Result<Handlebars<'static>, handlebar
             "event_caption": &event.caption,
             "event_date": &event.date,
             "event_poster": &event.poster,
-            "event_keyboard": &event.keyboard,
+            "event_links": &event.keyboard,
         });
 
         handlebars.register_template_string("my_template", &template_content)?;
@@ -36,14 +44,6 @@ fn load_template(event: Option<&Event>) -> Result<Handlebars<'static>, handlebar
     Ok(handlebars)
 }
 
-#[derive(Debug, Serialize, Deserialize, Clone)]
-struct Event {
-    caption: String,
-    date: String,
-    poster: String,
-    keyboard: String,
-}
-
 async fn fetch_event(collection: &mongodb::Collection<Document>, target_id: ObjectId) -> Option<Event> {
     let mut cursor = collection.find(doc! { "_id": target_id }, None).await.ok()?;
 
@@ -51,6 +51,7 @@ async fn fetch_event(collection: &mongodb::Collection<Document>, target_id: Obje
         if let Ok(document) = result {
             println!("BSON Document: {:#?}", document);
             let caption = document.get_str("caption").unwrap_or("N/A").to_string();
+
             let date_str = document
                 .get_str("date")
                 .unwrap_or_else(|_| "");
@@ -60,8 +61,17 @@ async fn fetch_event(collection: &mongodb::Collection<Document>, target_id: Obje
             });
             let formatted_date: String = date.format_with_items(StrftimeItems::new("%d.%m.%y %H:%M"))
                 .to_string();
+
             let poster = document.get_str("poster").unwrap_or("N/A").to_string();
-            // Convert the Array of objects to HTML links representation
+            let poster_link = match get_object_url(&poster).await {
+                Ok(link) => link,
+                Err(err) => {
+                    eprintln!("Error getting poster link: {}", err);
+                    // Provide a default value or handle the error as appropriate
+                    String::new()
+                }
+            };
+
             let keyboard_vec: Vec<String> = document.get_array("keyboard")
                 .map(|a| {
                     a.iter()
@@ -77,28 +87,55 @@ async fn fetch_event(collection: &mongodb::Collection<Document>, target_id: Obje
                         .collect()
                 })
                 .unwrap_or_else(|_| Vec::new());
-
             let keyboard = keyboard_vec.join("");
-            let keyboard_script = format!(
-                r#"
-                <script>
-                    var container = document.getElementById('eventLinks');
-                    container.innerHTML = '{}';
-                </script>
-                "#,
-                keyboard
-            );
 
             return Some(Event {
                 caption,
                 date: formatted_date,
-                poster,
-                keyboard: keyboard_script,
+                poster: poster_link,
+                keyboard
             });
         }
     }
-
     None
+}
+
+#[derive(Debug)]
+struct CustomError {
+    status_code: reqwest::StatusCode,
+}
+
+impl std::fmt::Display for CustomError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "Request failed with status code: {}", self.status_code)
+    }
+}
+
+impl std::error::Error for CustomError {}
+
+async fn get_object_url(object_link: &str) -> Result<String, Box<dyn std::error::Error>> {
+    let api_key = "YCAJEr71wlGngPV-PGRtCLXVC";
+    let bucket = "epicbot.test";
+    let object = object_link;
+
+    let url = format!(
+        "https://storage.yandexcloud.net/{}/{}",
+        bucket, object
+    );
+
+    let client = reqwest::Client::new();
+
+    let response = client
+        .get(&url)
+        .header("Authorization", format!("Api-Key {}", api_key))
+        .send()
+        .await?;
+
+    if response.status().is_success() {
+        Ok(url)
+    } else {
+        Err(Box::new(CustomError { status_code: response.status() }))
+    }
 }
 
 #[tokio::main]
@@ -122,17 +159,17 @@ async fn main() -> Result<(), Box<dyn std::error::Error>>{
 
     let event = fetch_event(&collection, target_id).await;
 
-    let handlebars = load_template(event.as_ref()).expect("Failed to load template");
+    let handlebars = load_template(event.as_ref()).await.expect("Failed to load template");
 
     // Data to fill in the template
-    let dynamic_route = warp::path("home")
+    let dynamic_route = warp::path("event")
         .and(warp::any().map(move || event.clone()))
         .map(move |event: Option<Event>| {
         let data = json!({
             "event_caption": event.as_ref().map_or("", |e| &e.caption),
             "event_date": event.as_ref().map_or("", |e| &e.date),
             "event_poster": event.as_ref().map_or("", |e| &e.poster),
-            "event_keyboard": event.as_ref().map_or("", |e| &e.keyboard),
+             "event_links": event.as_ref().map_or("", |e| &e.keyboard),
         });
 
         let html = handlebars.render("my_template", &data).expect("Failed to render HTML");
@@ -141,7 +178,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>>{
 
     let static_route = warp::path("static").and(warp::fs::dir("./static"));
 
-    let routes = static_route.or(dynamic_route);
+    // let routes = dynamic_route.or(keyboard_route);
+    let routes = dynamic_route.or(static_route);
 
     warp::serve(routes)
         .run(([127, 0, 0, 1], 8000))

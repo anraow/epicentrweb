@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Rust Web App</title>
-    <link rel="stylesheet" type="text/css" href="style/style.css">
+    <link rel="stylesheet" type="text/css" href="static/style/style.css">
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;700&display=swap" rel="stylesheet">
 </head>
 <body>
@@ -17,7 +17,9 @@
                 <img class="poster-picture" src="{{ event_poster}}" alt="Evento Poster">
             </div>
             <div class="event-details">
-                <div class="event-links" id="eventLinks"> </div>
+                <div class="event-links" id="eventLinks">
+                    {{{ event_links }}}
+                </div>
                 <div class="info">
                     <p class="date">{{ event_date }}<span>(dd.mm.yy HH:MM)</span></p>
                     <p class="description">{{ event_caption }}</p>
@@ -32,6 +34,5 @@
     <div class="footer">
         @2023 Epicentr.
     </div>
-    {{ event_keyboard }}
 </body>
 </html>
