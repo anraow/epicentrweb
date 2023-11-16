@@ -3,7 +3,6 @@ use mongodb::{Client, options::{ClientOptions}};
 use handlebars::Handlebars;
 use serde_json::json;
 use std::{fs};
-use std::str::FromStr;
 use futures::StreamExt;
 use warp::{Filter};
 use mongodb::{bson::{Document, doc}};
@@ -138,47 +137,48 @@ async fn get_object_url(object_link: &str) -> Result<String, Box<dyn std::error:
     }
 }
 
+async fn handle_event(target_id: ObjectId, collection: mongodb::Collection<Document>) -> Result<impl warp::Reply, warp::Rejection> {
+    let event = fetch_event(&collection, target_id).await;
+
+    if let Some(event) = event {
+        let handlebars = load_template(Some(&event)).await.expect("Failed to load template");
+
+        let data = json!({
+            "event_caption": &event.caption,
+            "event_date": &event.date,
+            "event_poster": &event.poster,
+            "event_links": &event.keyboard,
+        });
+
+        let html = handlebars.render("my_template", &data).expect("Failed to render HTML");
+        Ok(warp::reply::html(html))
+    } else {
+        // HANDLE CASE WHERE EVENT IS NOT FOUND
+        Ok(warp::reply::html("Event not found".to_string()))
+    }
+}
+
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>>{
     // MONGODB CONNECTION IS HERE
     let mut client_options = ClientOptions::parse("mongodb://localhost:27017").await?;
-
-    // Manually set an option.
+    // MANUALLY SET AN OPTION.
     client_options.app_name = Some("epicentrweb".to_string());
-
-    // Get a handle to the deployment.
+    // GET A HANDLE TO THE DEPLOYMENT.
     let client = Client::with_options(client_options)?;
-
-    // Get a handle to a database.
+    // GET A HANDLE TO A DATABASE.
     let db = client.database("bot");
-
-    // Get a handle to the "users" collection.
+    // GET A HANDLE TO THE "USERS" COLLECTION.
     let collection = db.collection::<Document>("users");
 
-    let target_id: ObjectId = ObjectId::from_str("64b6d1b17f20fe2884362ec6").expect("Invalid ObjectId");
-
-    let event = fetch_event(&collection, target_id).await;
-
-    let handlebars = load_template(event.as_ref()).await.expect("Failed to load template");
-
-    // Data to fill in the template
-    let dynamic_route = warp::path("event")
-        .and(warp::any().map(move || event.clone()))
-        .map(move |event: Option<Event>| {
-        let data = json!({
-            "event_caption": event.as_ref().map_or("", |e| &e.caption),
-            "event_date": event.as_ref().map_or("", |e| &e.date),
-            "event_poster": event.as_ref().map_or("", |e| &e.poster),
-             "event_links": event.as_ref().map_or("", |e| &e.keyboard),
-        });
-
-        let html = handlebars.render("my_template", &data).expect("Failed to render HTML");
-        warp::reply::html(html)
-    });
+    // DYNAMIC ROUTE FOR HANDLING EVENTS BASED ON OBJECTID
+    let dynamic_route = warp::path!("event" / ObjectId)
+        .and(warp::get())
+        .and(warp::any().map(move || collection.clone()))
+        .and_then(handle_event);
 
     let static_route = warp::path("static").and(warp::fs::dir("./static"));
 
-    // let routes = dynamic_route.or(keyboard_route);
     let routes = dynamic_route.or(static_route);
 
     warp::serve(routes)
